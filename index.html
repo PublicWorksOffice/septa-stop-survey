@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SEPTA — Top 100 Stops by Ridership</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; }
+    #map { position: absolute; inset: 0; }
+    #panel {
+      position: absolute; top: 12px; left: 12px; z-index: 1;
+      background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(4px);
+      padding: 12px 14px; border-radius: 8px; max-width: 260px;
+      font: 13px/1.4 system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+    #panel h1 { font-size: 14px; margin: 0 0 4px; }
+    #panel p { margin: 4px 0; color: #444; }
+    #status { color: #b00; }
+    #search-box {
+      position: absolute; top: 12px; right: 12px; z-index: 1;
+      background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(4px);
+      padding: 10px 12px; border-radius: 8px; width: 220px;
+      font: 13px/1.4 system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+    #search { display: flex; gap: 6px; }
+    #search input {
+      flex: 1; min-width: 0; padding: 6px 8px; font: inherit;
+      border: 1px solid #ccc; border-radius: 6px;
+    }
+    #search button {
+      padding: 6px 12px; font: inherit; cursor: pointer; color: #fff;
+      background: #2b6cb0; border: 0; border-radius: 6px;
+    }
+    #search-msg { margin: 2px 0; color: #b00; min-height: 0; }
+    #search-msg:empty { display: none; }
+    #filter { border: 0; border-top: 1px solid #e2e2e2; margin: 8px 0 0; padding: 8px 0 0; }
+    #filter legend {
+      padding: 0; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.04em; color: #888;
+    }
+    #filter label { display: flex; align-items: center; gap: 6px; margin: 4px 0; cursor: pointer; }
+    #filter input { margin: 0; }
+    .legend-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .dot { border-radius: 50%; opacity: 0.9; }
+    .ramp { height: 12px; border-radius: 6px; flex: 1;
+            background: linear-gradient(90deg, #ffd700, #c98a3c, #5b6b7a); }
+
+    /* Right-hand details panel (replaces the click popup). */
+    #details {
+      position: absolute; top: 0; right: 0; bottom: 0; z-index: 2;
+      width: 340px; max-width: 85vw; background: #fff;
+      box-shadow: -2px 0 10px rgba(0,0,0,0.18);
+      font: 13px/1.45 system-ui, sans-serif; color: #222;
+      transform: translateX(100%); transition: transform 0.2s ease;
+      display: flex; flex-direction: column;
+    }
+    #details.open { transform: translateX(0); }
+    #details header {
+      padding: 14px 16px; border-bottom: 1px solid #eee;
+      display: flex; align-items: flex-start; gap: 10px;
+    }
+    #details header h2 { font-size: 15px; margin: 0; flex: 1; }
+    #details .rank { font-weight: 700; color: #b8860b; }
+    #details .close {
+      border: 0; background: none; font-size: 20px; line-height: 1;
+      cursor: pointer; color: #888; padding: 0;
+    }
+    #details .body { padding: 14px 16px; overflow-y: auto; }
+    #details .facts { margin: 0 0 14px; }
+    #details .facts div { margin: 2px 0; color: #444; }
+    #details .facts strong { color: #111; }
+    #details .section-title {
+      font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: #888; margin: 16px 0 6px;
+    }
+    #details .survey { border-top: 1px dashed #ddd; padding-top: 10px; margin-top: 10px; }
+    #details .survey:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+    #details .qa { margin: 8px 0; }
+    #details .qa .q { color: #666; font-size: 12px; }
+    #details .qa .a { color: #111; }
+    #details .none { color: #888; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="panel">
+    <h1>SEPTA Top Stops By Ridership (Fall 2025)</h1>
+    <p>Top <strong>100</strong> stops by total weekly ridership across bus, trolley &amp;
+       rail (Fall 2025).</p>
+    <div class="legend-row"><span>#1</span><span class="ramp"></span><span>#100</span></div>
+    <div class="legend-row"><span class="dot" style="width:16px;height:16px;border:1.5px solid #fff;display:inline-flex;align-items:center;justify-content:center;color:#000;font-size:11px;font-weight:700;line-height:1">✓</span> Has survey</div>
+    <div class="legend-row"><span class="dot" style="width:16px;height:16px;background:#c98a3c;border:1.5px solid #fff"></span> Top 100 stop</div>
+    <div class="legend-row"><span class="dot" style="width:16px;height:16px;background:#14b8a6;border:1.5px solid #fff"></span> Non-top 100 stop</div>
+    <div class="legend-row"><span style="width:16px;height:16px;border:1px solid #444;background:rgba(150,150,150,0.25);border-radius:2px"></span> Council district</div>
+    <p id="status">Loading stops…</p>
+  </div>
+
+  <div id="search-box">
+    <form id="search" autocomplete="off">
+      <input id="q" type="text" inputmode="numeric" placeholder="Search by stop code…" />
+      <button type="submit">Go</button>
+    </form>
+    <p id="search-msg"></p>
+    <fieldset id="filter">
+      <legend>Show</legend>
+      <label><input type="radio" name="filter" value="all" checked /> All stops</label>
+      <label><input type="radio" name="filter" value="top" /> Top 100 stops only</label>
+      <label><input type="radio" name="filter" value="survey" /> Stops with a survey only</label>
+    </fieldset>
+  </div>
+
+  <aside id="details">
+    <header>
+      <h2><span id="d-rank" class="rank"></span> <span id="d-name"></span></h2>
+      <button class="close" id="d-close" aria-label="Close">×</button>
+    </header>
+    <div class="body" id="d-body"></div>
+  </aside>
+
+  <script>
+    const MAPTILER_KEY = 'BohnkiuybyZ8iMy8SiWq';
+    const STYLE_URL = `https://api.maptiler.com/maps/base-v4/style.json?key=${MAPTILER_KEY}`;
+    // Local GeoJSON files (one per mode); all share the same schema.
+    const DATA_FILES = ['bus.geojson', 'trolley.geojson', 'm1.geojson'];
+    const TOP_N = 100;
+
+    const status = document.getElementById('status');
+
+    // Ridership = all boardings + alightings across weekday, Saturday, Sunday.
+    function ridership(p) {
+      return (p.WK_Ons || 0) + (p.WK_Offs || 0) +
+             (p.Sat_Ons || 0) + (p.Sat_Offs || 0) +
+             (p.Sun_Ons || 0) + (p.Sun_Offs || 0);
+    }
+
+    // Every loaded stop (all modes); populated once data is fetched, used by search.
+    let ALL_FEATURES = [];
+    let TOP_FEATURES = [];                 // the ranked top-100 features
+    const topStopCodes = new Set();        // Stop_Codes present in the top 100
+    // Top-100 rank by platform row (FID is only unique within a file, so include Mode).
+    const rankByKey = new Map();
+    const rowKey = p => `${p.Mode}|${p.FID}`;
+
+    // --- Check icon (rendered to a map image) ---
+    // Bold white checkmark; reads on any dot color. Centered on surveyed stops and on
+    // surveyed top-100 ridership dots alike.
+    const ICON_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24">
+      <path d="M5 12.5 L10 17.5 L19 6.5" fill="none" stroke="#fff" stroke-width="3.4"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+
+    function addImageFromSVG(id, svg) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => { if (!map.hasImage(id)) map.addImage(id, img, { pixelRatio: 2 }); resolve(); };
+        img.onerror = reject;
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      });
+    }
+    const loadIcons = () => addImageFromSVG('check-white', ICON_CHECK);
+
+    // --- Accessibility survey (local CSV), joined to stops by Stop_Code ---
+    const SURVEY_URL = 'survey_responses.csv';
+    const surveyByStopCode = new Map(); // Stop_Code (string) -> array of response objects
+
+    // Minimal RFC-4180 CSV parser: handles quoted fields, embedded commas/newlines, "" escapes.
+    function parseCSV(text) {
+      const rows = [];
+      let row = [], field = '', inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQuotes) {
+          if (c === '"') {
+            if (text[i + 1] === '"') { field += '"'; i++; }
+            else inQuotes = false;
+          } else field += c;
+        } else if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+        else if (c === '\r') { /* ignore */ }
+        else field += c;
+      }
+      if (field.length || row.length) { row.push(field); rows.push(row); }
+      return rows;
+    }
+
+    async function loadSurvey() {
+      try {
+        const res = await fetch(SURVEY_URL);
+        if (!res.ok) throw new Error(res.status);
+        const rows = parseCSV(await res.text());
+        if (!rows.length) return;
+        const header = rows[0];
+        const idCol = header.findIndex(h => /bus stop id/i.test(h));
+        if (idCol < 0) return;
+        for (let r = 1; r < rows.length; r++) {
+          const cells = rows[r];
+          const code = (cells[idCol] || '').trim();
+          if (!/^\d+$/.test(code)) continue; // skip "no sign", "Unknown", etc.
+          const obj = {};
+          header.forEach((h, i) => { obj[h.trim()] = (cells[i] || '').trim(); });
+          if (!surveyByStopCode.has(code)) surveyByStopCode.set(code, []);
+          surveyByStopCode.get(code).push(obj);
+        }
+      } catch (err) {
+        console.warn('Survey data unavailable:', err);
+      }
+    }
+
+    const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: STYLE_URL,
+      center: [-75.27, 39.94], // Philadelphia (overridden by fitBounds once data loads)
+      zoom: 10
+    });
+    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+
+    // Council districts (polygons) drawn beneath the stops, with outline + labels.
+    async function addCouncilDistricts() {
+      const res = await fetch('council_districts.geojson');
+      if (!res.ok) throw new Error(`council_districts: ${res.status}`);
+      const geo = await res.json();
+      map.addSource('council', { type: 'geojson', data: geo });
+
+      // Light, distinct fill per district number (1–10).
+      const fillColor = [
+        'match', ['get', 'DISTRICT'],
+        '1', '#8dd3c7', '2', '#ffffb3', '3', '#bebada', '4', '#fb8072', '5', '#80b1d3',
+        '6', '#fdb462', '7', '#b3de69', '8', '#fccde5', '9', '#bc80bd', '10', '#ccebc5',
+        '#cccccc'
+      ];
+      map.addLayer({
+        id: 'council-fill',
+        type: 'fill',
+        source: 'council',
+        paint: { 'fill-color': fillColor, 'fill-opacity': 0.18 }
+      });
+      map.addLayer({
+        id: 'council-line',
+        type: 'line',
+        source: 'council',
+        paint: { 'line-color': '#444', 'line-width': 1.2, 'line-opacity': 0.6 }
+      });
+      map.addLayer({
+        id: 'council-label',
+        type: 'symbol',
+        source: 'council',
+        layout: {
+          'text-field': ['concat', 'District ', ['get', 'DISTRICT']],
+          'text-font': ['Inter Semi Bold', 'Noto Sans Semi Bold'],
+          'text-size': 13
+        },
+        paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.5 }
+      });
+    }
+
+    // Load and concatenate every mode's GeoJSON into one feature list.
+    async function fetchAllFeatures() {
+      const all = [];
+      for (const file of DATA_FILES) {
+        const res = await fetch(file);
+        if (!res.ok) throw new Error(`${file}: ${res.status}`);
+        const gj = await res.json();
+        all.push(...(gj.features || []));
+        status.textContent = `Loaded ${all.length.toLocaleString()} stops…`;
+      }
+      return all;
+    }
+
+    function load(allFeatures) {
+      // Rank the combined stops across all modes and keep the top 100.
+      const features = allFeatures
+        .map(f => ({ ...f, properties: { ...f.properties, _ridership: ridership(f.properties) } }))
+        .sort((a, b) => b.properties._ridership - a.properties._ridership)
+        .slice(0, TOP_N)
+        .map((f, i) => ({ ...f, properties: { ...f.properties, _rank: i + 1 } }));
+
+      const top = { type: 'FeatureCollection', features };
+      const count = features.length || 1;
+      TOP_FEATURES = features;
+      features.forEach(f => {
+        rankByKey.set(rowKey(f.properties), f.properties._rank);
+        topStopCodes.add(String(f.properties.Stop_Code));
+      });
+
+      map.addSource('stops', { type: 'geojson', data: top });
+      map.addLayer({
+        id: 'stops',
+        type: 'circle',
+        source: 'stops',
+        paint: {
+          'circle-radius': 9,
+          // Color by rank: gold at #1 fading to muted slate at the bottom.
+          'circle-color': [
+            'interpolate', ['linear'], ['get', '_rank'],
+            1, '#ffd700',
+            count / 2, '#c98a3c',
+            count, '#5b6b7a'
+          ],
+          'circle-opacity': 0.9,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#fff'
+        }
+      });
+
+      // Ring used to highlight a searched stop (empty until a search runs).
+      map.addSource('search-highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'search-highlight',
+        type: 'circle',
+        source: 'search-highlight',
+        paint: {
+          'circle-radius': 15,
+          'circle-color': 'rgba(0,0,0,0)',
+          'circle-stroke-color': '#d7263d',
+          'circle-stroke-width': 3
+        }
+      });
+
+      // Fit the map to the top stops.
+      const b = new maplibregl.LngLatBounds();
+      features.forEach(f => b.extend(f.geometry.coordinates));
+      map.fitBounds(b, { padding: 60, maxZoom: 14 });
+
+      // Clicking a stop opens the side details panel.
+      map.on('click', 'stops', (e) => showDetails(e.features[0].properties));
+      map.on('mouseenter', 'stops', () => map.getCanvas().style.cursor = 'pointer');
+      map.on('mouseleave', 'stops', () => map.getCanvas().style.cursor = '');
+
+      status.style.color = '#444';
+      const topRidership = features.length ? features[0].properties._ridership : 0;
+      status.textContent = ``;
+    }
+
+    // --- Details side panel ---
+    const detailsEl = document.getElementById('details');
+    document.getElementById('d-close').onclick = () => detailsEl.classList.remove('open');
+
+    function renderSurvey(code) {
+      const responses = surveyByStopCode.get(String(code)) || [];
+      if (!responses.length) {
+        return `<div class="section-title">Accessibility survey</div>` +
+               `<div class="none">No survey responses on file for stop ${esc(code)}.</div>`;
+      }
+      const label = responses.length === 1 ? '1 response' : `${responses.length} responses`;
+      const blocks = responses.map(r => {
+        // Show every answered question (blank station-audit columns are skipped automatically).
+        const qa = Object.entries(r)
+          .filter(([q, a]) => a && !/^bus stop id/i.test(q))
+          .map(([q, a]) => `<div class="qa"><div class="q">${esc(q)}</div><div class="a">${esc(a)}</div></div>`)
+          .join('');
+        return `<div class="survey">${qa}</div>`;
+      }).join('');
+      return `<div class="section-title">Accessibility survey · ${label}</div>${blocks}`;
+    }
+
+    function showDetails(p) {
+      // Ranked top-100 stops carry _rank; surveyed-only stops don't.
+      document.getElementById('d-rank').textContent = p._rank ? `#${p._rank}` : '';
+      document.getElementById('d-name').textContent = p.Stop;
+      const rankLine = p._rank
+        ? `<div>Ridership rank: <strong>#${p._rank}</strong> of 100</div>`
+        : `<div>Not in the top 100 by ridership</div>`;
+      document.getElementById('d-body').innerHTML =
+        `<div class="facts">` +
+          `<div>${esc(p.Mode)} · Route <strong>${esc(p.Route)}</strong> · ${esc(p.Direction)}</div>` +
+          `<div>Stop code <strong>${esc(p.Stop_Code)}</strong></div>` +
+          `<div>Weekly ridership: <strong>${Number(p._ridership).toLocaleString()}</strong></div>` +
+          rankLine +
+        `</div>` +
+        renderSurvey(p.Stop_Code);
+      detailsEl.classList.add('open');
+    }
+
+    // Render surveyed stops:
+    //  - surveyed but NOT in the top 100  -> teal dot with a white checkmark icon
+    //  - surveyed AND in the top 100      -> keep the ridership dot, add a white checkmark inside
+    function addSurveyedStops(allFeatures) {
+      if (!surveyByStopCode.size) return;
+
+      // Surveyed-only stops: one point per code, excluding any that are top-100 stops.
+      const seen = new Set();
+      const surveyOnly = [];
+      for (const f of allFeatures) {
+        const code = String(f.properties.Stop_Code);
+        if (!surveyByStopCode.has(code) || topStopCodes.has(code) || seen.has(code)) continue;
+        seen.add(code);
+        surveyOnly.push({ ...f, properties: { ...f.properties, _ridership: ridership(f.properties) } });
+      }
+
+      // Top-100 stops that were surveyed (these get a badge); one point per code.
+      const seenBadge = new Set();
+      const badges = [];
+      for (const f of TOP_FEATURES) {
+        const code = String(f.properties.Stop_Code);
+        if (!surveyByStopCode.has(code) || seenBadge.has(code)) continue;
+        seenBadge.add(code);
+        badges.push(f); // already carries _rank and _ridership
+      }
+
+      if (surveyOnly.length) {
+        map.addSource('survey-stops', { type: 'geojson', data: { type: 'FeatureCollection', features: surveyOnly } });
+        map.addLayer({
+          id: 'survey-stops',
+          type: 'circle',
+          source: 'survey-stops',
+          paint: {
+            'circle-radius': 9,            // same size as the ridership dots
+            'circle-color': '#14b8a6',   // teal — distinct from the gold→slate ridership scale
+            'circle-opacity': 0.95,
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': '#fff'
+          }
+        });
+        map.addLayer({
+          id: 'survey-icon',
+          type: 'symbol',
+          source: 'survey-stops',
+          layout: {
+            'icon-image': 'check-white',
+            'icon-size': 0.85,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true
+          }
+        });
+        for (const id of ['survey-stops', 'survey-icon']) {
+          map.on('click', id, (e) => showDetails(e.features[0].properties));
+          map.on('mouseenter', id, () => map.getCanvas().style.cursor = 'pointer');
+          map.on('mouseleave', id, () => map.getCanvas().style.cursor = '');
+        }
+      }
+
+      if (badges.length) {
+        map.addSource('survey-badges', { type: 'geojson', data: { type: 'FeatureCollection', features: badges } });
+        map.addLayer({
+          id: 'survey-badges',
+          type: 'symbol',
+          source: 'survey-badges',
+          layout: {
+            'icon-image': 'check-white',   // white checkmark centered inside the ridership dot
+            'icon-size': 0.85,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true
+          }
+        });
+        map.on('click', 'survey-badges', (e) => showDetails(e.features[0].properties));
+        map.on('mouseenter', 'survey-badges', () => map.getCanvas().style.cursor = 'pointer');
+        map.on('mouseleave', 'survey-badges', () => map.getCanvas().style.cursor = '');
+      }
+    }
+
+    // --- Show filter (radio) ---
+    // all   -> top-100 dots + surveyed-only dots + surveyed top-stop checkmarks
+    // top   -> top-100 dots only
+    // survey-> any stop with a survey (surveyed-only dots + surveyed top-stop dots)
+    // both  -> stops that are surveyed AND in the top 100
+    function applyFilter(mode) {
+      const setVis = (id, on) => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); };
+      const surveyedNums = [...surveyByStopCode.keys()].map(Number);
+      const onlySurveyed = ['in', ['get', 'Stop_Code'], ['literal', surveyedNums]];
+
+      if (map.getLayer('stops')) {
+        // Restrict the top-100 dots to surveyed stops when the mode is survey-scoped.
+        map.setFilter('stops', (mode === 'survey' || mode === 'both') ? onlySurveyed : null);
+      }
+      // Surveyed-only (non-top-100) dots show only for "all" and "with a survey only".
+      const showSurveyOnly = (mode === 'all' || mode === 'survey');
+      setVis('survey-stops', showSurveyOnly);
+      setVis('survey-icon', showSurveyOnly);
+      // Clipboards sit on surveyed top-100 stops, which are shown in every mode.
+      setVis('survey-badges', true);
+    }
+
+    document.getElementById('filter').addEventListener('change', (e) => {
+      if (e.target.name === 'filter') applyFilter(e.target.value);
+    });
+
+    // --- Search by stop code (across all loaded stops, not just the top 100) ---
+    const searchMsg = document.getElementById('search-msg');
+
+    function highlight(coords) {
+      map.getSource('search-highlight').setData({
+        type: 'FeatureCollection',
+        features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: coords }, properties: {} }]
+      });
+    }
+
+    document.getElementById('search').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = document.getElementById('q').value.trim();
+      searchMsg.textContent = '';
+      if (!ALL_FEATURES.length) { searchMsg.textContent = 'Still loading…'; return; }
+      if (!/^\d+$/.test(q)) { searchMsg.textContent = 'Enter a numeric stop code.'; return; }
+
+      // A code can have several platform rows; show the busiest as the representative.
+      const matches = ALL_FEATURES
+        .filter(f => String(f.properties.Stop_Code) === q)
+        .map(f => ({ ...f, properties: { ...f.properties, _ridership: ridership(f.properties) } }))
+        .sort((a, b) => b.properties._ridership - a.properties._ridership);
+
+      if (!matches.length) { searchMsg.textContent = `No stop with code ${q}.`; return; }
+
+      const rep = matches[0];
+      rep.properties._rank = rankByKey.get(rowKey(rep.properties)); // undefined if outside top 100
+      highlight(rep.geometry.coordinates);
+      map.flyTo({ center: rep.geometry.coordinates, zoom: 15 });
+      showDetails(rep.properties);
+    });
+
+    map.on('load', async () => {
+      try {
+        const [allFeatures] = await Promise.all([fetchAllFeatures(), loadSurvey(), loadIcons()]);
+        await addCouncilDistricts();   // add first so districts render beneath the stops
+        ALL_FEATURES = allFeatures;
+        load(allFeatures);
+        addSurveyedStops(allFeatures);
+        applyFilter(document.querySelector('input[name="filter"]:checked').value);
+      } catch (err) {
+        console.error(err);
+        status.textContent = 'Error: ' + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
