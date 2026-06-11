@@ -135,11 +135,13 @@
 
     const status = document.getElementById('status');
 
-    // Ridership = all boardings + alightings across weekday, Saturday, Sunday.
+    // Weekly ridership = boardings + alightings, with the average-weekday figure counted
+    // 5× (Mon–Fri) plus the two weekend days, so weekdays and weekends aren't weighted equally.
     function ridership(p) {
-      return (p.WK_Ons || 0) + (p.WK_Offs || 0) +
-             (p.Sat_Ons || 0) + (p.Sat_Offs || 0) +
-             (p.Sun_Ons || 0) + (p.Sun_Offs || 0);
+      const weekday = (p.WK_Ons || 0) + (p.WK_Offs || 0);
+      const saturday = (p.Sat_Ons || 0) + (p.Sat_Offs || 0);
+      const sunday = (p.Sun_Ons || 0) + (p.Sun_Offs || 0);
+      return weekday * 5 + saturday + sunday;
     }
 
     // Every loaded stop (all modes); populated once data is fetched, used by search.
