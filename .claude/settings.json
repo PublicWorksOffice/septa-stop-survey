@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"=== gviz CSV endpoint \\(HTTP status + first line\\) ===\")",
+      "Bash(curl -sL -o /tmp/gv.csv -w 'status: %{http_code}\\\\nbytes: %{size_download}\\\\n' https://docs.google.com/spreadsheets/d/1JXfbxlx9yVOT5JVzHu-g_Z7mxIbMewhEor_1T8_CiCI/gviz/tq?tqx=out:csv)",
+      "Bash(echo \"--- header detection ---\")",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -sL -D - -o /dev/null -H 'Origin: http://localhost:8000' https://docs.google.com/spreadsheets/d/1JXfbxlx9yVOT5JVzHu-g_Z7mxIbMewhEor_1T8_CiCI/gviz/tq?tqx=out:csv)"
+    ]
+  }
+}

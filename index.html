@@ -215,8 +215,18 @@
     }
     const loadIcons = () => addImageFromSVG('check-white', ICON_CHECK);
 
-    // --- Accessibility survey (local CSV), joined to stops by Stop_Code ---
-    const SURVEY_URL = 'survey_responses.csv';
+    // --- Accessibility survey (live Google Sheet, CSV export), joined to stops by Stop_Code ---
+    // gviz CSV endpoint for the published/link-shared sheet; reflects edits on each load.
+    const SURVEY_SHEET_ID = '1JXfbxlx9yVOT5JVzHu-g_Z7mxIbMewhEor_1T8_CiCI';
+    const SURVEY_URL = `https://docs.google.com/spreadsheets/d/${SURVEY_SHEET_ID}/gviz/tq?tqx=out:csv`;
+    // Survey questions hidden from the UI (PII). Matched case-insensitively on trimmed header.
+    const HIDDEN_QUESTIONS = new Set([
+      'what is your full name?',
+      'what is your email?',
+      'what is your phone number?',
+      'email address',
+      'group members names'
+    ]);
     const surveyByStopCode = new Map(); // Stop_Code (string) -> array of response objects
 
     // Minimal RFC-4180 CSV parser: handles quoted fields, embedded commas/newlines, "" escapes.
@@ -446,9 +456,9 @@
       }
       const label = responses.length === 1 ? '1 response' : `${responses.length} responses`;
       const blocks = responses.map(r => {
-        // Show every answered question (blank station-audit columns are skipped automatically).
+        // Show every answered question except the stop-id column and hidden PII fields.
         const qa = Object.entries(r)
-          .filter(([q, a]) => a && !/^bus stop id/i.test(q))
+          .filter(([q, a]) => a && !/^bus stop id/i.test(q) && !HIDDEN_QUESTIONS.has(q.trim().toLowerCase()))
           .map(([q, a]) => `<div class="qa"><div class="q">${esc(q)}</div><div class="a">${esc(a)}</div></div>`)
           .join('');
         return `<div class="survey">${qa}</div>`;
