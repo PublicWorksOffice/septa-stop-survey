@@ -505,7 +505,12 @@
         const code = f.properties.stop_id;
         if (!surveyByStopCode.has(code) || topStopIds.has(code) || seen.has(code)) continue;
         seen.add(code);
-        surveyOnly.push({ ...f, properties: { ...f.properties, _ridership: ridership(f.properties) } });
+        const [lng, lat] = f.geometry.coordinates;
+        // Tag with the council district too, so the details panel shows it (these dots
+        // aren't in TOP_FEATURES, which is where _district otherwise gets set).
+        surveyOnly.push({ ...f, properties: {
+          ...f.properties, _ridership: ridership(f.properties), _district: districtOf(lng, lat)
+        } });
       }
 
       // Top-100 stops that were surveyed (these get a badge); one point per code.
