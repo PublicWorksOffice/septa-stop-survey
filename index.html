@@ -130,8 +130,9 @@
   <script>
     const MAPTILER_KEY = 'jYwXmpF7QofO4IU0GYmv';
     const STYLE_URL = `https://api.maptiler.com/maps/base-v4/style.json?key=${MAPTILER_KEY}`;
-    // Local GeoJSON files (one per mode); all share the same schema.
-    const DATA_FILES = ['bus.geojson', 'trolley.geojson', 'm1.geojson'];
+    // Single merged stops file: one feature per unique stop (deduped by stop_id), with
+    // summed WK/Sat/Sun ridership columns and a precomputed weekly_visits.
+    const DATA_FILES = ['stops_merged.geojson'];
 
     const status = document.getElementById('status');
 
@@ -146,11 +147,11 @@
 
     // Every loaded stop (all modes); populated once data is fetched, used by search.
     let ALL_FEATURES = [];
-    let TOP_FEATURES = [];                 // the ranked top-100 features
-    const topStopCodes = new Set();        // Stop_Codes present in the top 100
-    // Within-district rank by platform row (FID is only unique within a file, so include Mode).
+    let TOP_FEATURES = [];                 // the ranked top-per-district features
+    const topStopIds = new Set();          // stop_ids present in the per-district top set
+    // Within-district rank, keyed by the (unique) stop_id.
     const rankByKey = new Map();
-    const rowKey = p => `${p.Mode}|${p.FID}`;
+    const rowKey = p => p.stop_id;
 
     const PER_DISTRICT = 10;   // top-N stops by ridership to show within each council district
     const topByDistrict = new Map();   // DISTRICT -> ranked top-N feature list (for district popups)
@@ -215,7 +216,7 @@
     }
     const loadIcons = () => addImageFromSVG('check-white', ICON_CHECK);
 
-    // --- Accessibility survey (live Google Sheet, CSV export), joined to stops by Stop_Code ---
+    // --- Accessibility survey (live Google Sheet, CSV export), joined to stops by stop_id ---
     // gviz CSV endpoint for the published/link-shared sheet; reflects edits on each load.
     const SURVEY_SHEET_ID = '1JXfbxlx9yVOT5JVzHu-g_Z7mxIbMewhEor_1T8_CiCI';
     const SURVEY_URL = `https://docs.google.com/spreadsheets/d/${SURVEY_SHEET_ID}/gviz/tq?tqx=out:csv`;
@@ -335,7 +336,7 @@
         const rows = list.map((f, i) => {
           const p = f.properties;
           return `<li><a href="#" data-i="${i}">#${p._rank} · ` +
-                 `<strong>${esc(String(p.Stop_Code))}</strong> — ${esc(p.Stop)}</a></li>`;
+                 `<strong>${esc(p.stop_id)}</strong> — ${esc(p.name)}</a></li>`;
         }).join('');
         const html = `<div class="popup-title">District ${esc(d)} · top ${list.length} by ridership</div>` +
                      `<ol class="stop-list">${rows}</ol>`;
@@ -393,7 +394,7 @@
       TOP_FEATURES = features;
       features.forEach(f => {
         rankByKey.set(rowKey(f.properties), f.properties._rank);
-        topStopCodes.add(String(f.properties.Stop_Code));
+        topStopIds.add(f.properties.stop_id);
       });
 
       map.addSource('stops', { type: 'geojson', data: top });
@@ -467,24 +468,27 @@
     }
 
     function showDetails(p) {
-      // Top-10-per-district stops carry _rank; others don't.
+      // Top-per-district stops carry _rank; others don't.
       document.getElementById('d-rank').textContent = p._rank ? `#${p._rank}` : '';
-      document.getElementById('d-name').textContent = p.Stop;
+      document.getElementById('d-name').textContent = p.name;
       const districtLine = p._district != null
         ? `<div>Council district <strong>${esc(p._district)}</strong></div>`
         : `<div>Outside the council districts</div>`;
       const rankLine = p._rank
         ? `<div>Ridership rank: <strong>#${p._rank}</strong> of ${PER_DISTRICT} in district ${esc(p._district)}</div>`
         : `<div>Not a top-${PER_DISTRICT} stop in its district</div>`;
+      const wv = p.weekly_visits;
+      const ridershipLine = (wv == null)
+        ? `<div>Weekly ridership: <strong>no data</strong></div>`
+        : `<div>Weekly ridership: <strong>${Number(wv).toLocaleString()}</strong></div>`;
       document.getElementById('d-body').innerHTML =
         `<div class="facts">` +
-          `<div>${esc(p.Mode)} · Route <strong>${esc(p.Route)}</strong> · ${esc(p.Direction)}</div>` +
-          `<div>Stop code <strong>${esc(p.Stop_Code)}</strong></div>` +
-          `<div>Weekly ridership: <strong>${Number(p._ridership).toLocaleString()}</strong></div>` +
+          `<div>Stop ID <strong>${esc(p.stop_id)}</strong></div>` +
+          ridershipLine +
           districtLine +
           rankLine +
         `</div>` +
-        renderSurvey(p.Stop_Code);
+        renderSurvey(p.stop_id);
       detailsEl.classList.add('open');
     }
 
@@ -498,8 +502,8 @@
       const seen = new Set();
       const surveyOnly = [];
       for (const f of allFeatures) {
-        const code = String(f.properties.Stop_Code);
-        if (!surveyByStopCode.has(code) || topStopCodes.has(code) || seen.has(code)) continue;
+        const code = f.properties.stop_id;
+        if (!surveyByStopCode.has(code) || topStopIds.has(code) || seen.has(code)) continue;
         seen.add(code);
         surveyOnly.push({ ...f, properties: { ...f.properties, _ridership: ridership(f.properties) } });
       }
@@ -508,7 +512,7 @@
       const seenBadge = new Set();
       const badges = [];
       for (const f of TOP_FEATURES) {
-        const code = String(f.properties.Stop_Code);
+        const code = f.properties.stop_id;
         if (!surveyByStopCode.has(code) || seenBadge.has(code)) continue;
         seenBadge.add(code);
         badges.push(f); // already carries _rank and _ridership
@@ -572,11 +576,11 @@
     // both  -> stops that are surveyed AND in the top 100
     function applyFilter(mode) {
       const setVis = (id, on) => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); };
-      const surveyedNums = [...surveyByStopCode.keys()].map(Number);
-      const onlySurveyed = ['in', ['get', 'Stop_Code'], ['literal', surveyedNums]];
+      const surveyedIds = [...surveyByStopCode.keys()];  // stop_id strings
+      const onlySurveyed = ['in', ['get', 'stop_id'], ['literal', surveyedIds]];
 
       if (map.getLayer('stops')) {
-        // Restrict the top-100 dots to surveyed stops when the mode is survey-scoped.
+        // Restrict the top dots to surveyed stops when the mode is survey-scoped.
         map.setFilter('stops', (mode === 'survey' || mode === 'both') ? onlySurveyed : null);
       }
       // Surveyed-only (non-top-100) dots show only for "all" and "with a survey only".
@@ -608,11 +612,10 @@
       if (!ALL_FEATURES.length) { searchMsg.textContent = 'Still loading…'; return; }
       if (!/^\d+$/.test(q)) { searchMsg.textContent = 'Enter a numeric stop code.'; return; }
 
-      // A code can have several platform rows; show the busiest as the representative.
+      // stop_id is unique in the merged file, so this matches at most one stop.
       const matches = ALL_FEATURES
-        .filter(f => String(f.properties.Stop_Code) === q)
-        .map(f => ({ ...f, properties: { ...f.properties, _ridership: ridership(f.properties) } }))
-        .sort((a, b) => b.properties._ridership - a.properties._ridership);
+        .filter(f => f.properties.stop_id === q)
+        .map(f => ({ ...f, properties: { ...f.properties, _ridership: ridership(f.properties) } }));
 
       if (!matches.length) { searchMsg.textContent = `No stop with code ${q}.`; return; }
 
