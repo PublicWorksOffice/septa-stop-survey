@@ -42,6 +42,19 @@
     }
     #filter label { display: flex; align-items: center; gap: 6px; margin: 4px 0; cursor: pointer; }
     #filter input { margin: 0; }
+    #amenity { border: 0; border-top: 1px solid #e2e2e2; margin: 8px 0 0; padding: 8px 0 0; }
+    #amenity legend {
+      padding: 0; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.04em; color: #888;
+    }
+    #amenity label { display: flex; align-items: center; gap: 6px; margin: 5px 0; }
+    #amenity span { flex: 1; }
+    #amenity select {
+      flex: 0 0 auto; font: inherit; padding: 2px 4px;
+      border: 1px solid #ccc; border-radius: 4px; background: #fff;
+    }
+    #amenity-msg { margin: 4px 0 0; color: #666; font-size: 12px; }
+    #amenity-msg:empty { display: none; }
     .legend-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
     .dot { border-radius: 50%; opacity: 0.9; }
     .ramp { height: 12px; border-radius: 6px; flex: 1;
@@ -83,6 +96,15 @@
       font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
       color: #888; margin: 16px 0 6px;
     }
+    /* Routes serving the stop: one row per route, its headsigns listed beneath. */
+    #details .route { display: flex; gap: 8px; margin: 6px 0; }
+    #details .route-name {
+      flex: 0 0 auto; min-width: 34px; padding: 1px 6px; border-radius: 4px;
+      background: #2b6cb0; color: #fff; font-size: 12px; font-weight: 700;
+      text-align: center; height: fit-content;
+    }
+    #details .route-signs { color: #333; }
+    #details .route-signs div { margin: 1px 0; }
     #details .survey { border-top: 1px dashed #ddd; padding-top: 10px; margin-top: 10px; }
     #details .survey:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
     #details .qa { margin: 8px 0; }
@@ -116,6 +138,24 @@
       <label><input type="radio" name="filter" value="all" checked /> All stops</label>
       <label><input type="radio" name="filter" value="top" /> Top 10 per district only</label>
       <label><input type="radio" name="filter" value="survey" /> Stops with a survey only</label>
+    </fieldset>
+    <fieldset id="amenity">
+      <legend>Survey answers</legend>
+      <label><span>Has a shelter</span>
+        <select id="f-shelter">
+          <option value="any">Any</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+      <label><span>Has seating</span>
+        <select id="f-seating">
+          <option value="any">Any</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+      <p id="amenity-msg"></p>
     </fieldset>
   </div>
 
@@ -467,6 +507,44 @@
       return `<div class="section-title">Accessibility survey · ${label}</div>${blocks}`;
     }
 
+    // route_headsigns is an array of "ROUTE - Headsign" strings from the GTFS join.
+    // MapLibre stringifies array properties on features read back off the map, so a
+    // click handler hands us JSON text while the search path hands us the real array.
+    function routeHeadsigns(p) {
+      const raw = p.route_headsigns;
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string' && raw.trim()) {
+        try { const v = JSON.parse(raw); return Array.isArray(v) ? v : []; } catch { return []; }
+      }
+      return [];
+    }
+
+    function renderRoutes(p) {
+      const pairs = routeHeadsigns(p);
+      if (!pairs.length) {
+        return `<div class="section-title">Routes</div>` +
+               `<div class="none">No scheduled service found for this stop.</div>`;
+      }
+      // Group the flat "ROUTE - Headsign" strings back under one row per route.
+      const byRoute = new Map();
+      for (const s of pairs) {
+        const i = s.indexOf(' - ');
+        const route = i < 0 ? s : s.slice(0, i);
+        const sign = i < 0 ? '' : s.slice(i + 3);
+        if (!byRoute.has(route)) byRoute.set(route, []);
+        if (sign) byRoute.get(route).push(sign);
+      }
+      const rows = [...byRoute].map(([route, signs]) => {
+        const signHtml = signs.length
+          ? signs.map(s => `<div>${esc(s)}</div>`).join('')
+          : `<div class="none">no headsign</div>`;
+        return `<div class="route"><span class="route-name">${esc(route)}</span>` +
+               `<span class="route-signs">${signHtml}</span></div>`;
+      }).join('');
+      const label = byRoute.size === 1 ? '1 route' : `${byRoute.size} routes`;
+      return `<div class="section-title">Routes &amp; destinations · ${label}</div>${rows}`;
+    }
+
     function showDetails(p) {
       // Top-per-district stops carry _rank; others don't.
       document.getElementById('d-rank').textContent = p._rank ? `#${p._rank}` : '';
@@ -488,6 +566,7 @@
           districtLine +
           rankLine +
         `</div>` +
+        renderRoutes(p) +
         renderSurvey(p.stop_id);
       detailsEl.classList.add('open');
     }
@@ -579,14 +658,48 @@
     // top   -> top-100 dots only
     // survey-> any stop with a survey (surveyed-only dots + surveyed top-stop dots)
     // both  -> stops that are surveyed AND in the top 100
+    // Amenity questions on the survey form, matched against the sheet's column headers.
+    const AMENITY_QUESTIONS = {
+      shelter: /does the stop have a shelter/i,
+      seating: /does the stop have a place to sit/i
+    };
+    const amenityMsg = document.getElementById('amenity-msg');
+
+    // stop_ids whose survey answers satisfy the selected amenity dropdowns. A stop can
+    // have several responses; it matches if ANY one of them answers the way you asked.
+    function amenityMatchIds(want) {
+      const active = Object.entries(want).filter(([, v]) => v !== 'any');
+      if (!active.length) return null;   // null = "no amenity filter"
+      const ids = [];
+      for (const [code, responses] of surveyByStopCode) {
+        const ok = responses.some(r => active.every(([key, val]) => {
+          const re = AMENITY_QUESTIONS[key];
+          const hit = Object.entries(r).find(([q]) => re.test(q));
+          return hit && hit[1].trim().toLowerCase() === val.toLowerCase();
+        }));
+        if (ok) ids.push(code);
+      }
+      return ids;
+    }
+
     function applyFilter(mode) {
       const setVis = (id, on) => { if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none'); };
+      const setF = (id, f) => { if (map.getLayer(id)) map.setFilter(id, f); };
       const surveyedIds = [...surveyByStopCode.keys()];  // stop_id strings
       const onlySurveyed = ['in', ['get', 'stop_id'], ['literal', surveyedIds]];
 
+      const want = {
+        shelter: document.getElementById('f-shelter').value,
+        seating: document.getElementById('f-seating').value
+      };
+      const matchIds = amenityMatchIds(want);
+      // An amenity filter only makes sense on surveyed stops, so it implies survey scope.
+      const onlyAmenity = matchIds && ['in', ['get', 'stop_id'], ['literal', matchIds]];
+
       if (map.getLayer('stops')) {
         // Restrict the top dots to surveyed stops when the mode is survey-scoped.
-        map.setFilter('stops', (mode === 'survey' || mode === 'both') ? onlySurveyed : null);
+        map.setFilter('stops', onlyAmenity ||
+          ((mode === 'survey' || mode === 'both') ? onlySurveyed : null));
       }
       // Surveyed-only (non-top-100) dots show only for "all" and "with a survey only".
       const showSurveyOnly = (mode === 'all' || mode === 'survey');
@@ -594,11 +707,18 @@
       setVis('survey-icon', showSurveyOnly);
       // Clipboards sit on surveyed top-100 stops, which are shown in every mode.
       setVis('survey-badges', true);
+      for (const id of ['survey-stops', 'survey-icon', 'survey-badges']) setF(id, onlyAmenity || null);
+
+      amenityMsg.textContent = matchIds
+        ? `${matchIds.length} surveyed ${matchIds.length === 1 ? 'stop' : 'stops'} match.`
+        : '';
     }
 
+    const currentMode = () => document.querySelector('input[name="filter"]:checked').value;
     document.getElementById('filter').addEventListener('change', (e) => {
       if (e.target.name === 'filter') applyFilter(e.target.value);
     });
+    document.getElementById('amenity').addEventListener('change', () => applyFilter(currentMode()));
 
     // --- Search by stop code (across all loaded stops, not just the top 100) ---
     const searchMsg = document.getElementById('search-msg');
